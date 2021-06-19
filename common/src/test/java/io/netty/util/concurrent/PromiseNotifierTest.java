@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -16,28 +16,33 @@
 
 package io.netty.util.concurrent;
 
-import static org.mockito.Mockito.*;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.ExpectedException;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.*;
 
 public class PromiseNotifierTest {
 
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
-
     @Test
     public void testNullPromisesArray() {
-        expectedException.expect(NullPointerException.class);
-        new PromiseNotifier<Void, Future<Void>>((Promise<Void>[]) null);
+        assertThrows(NullPointerException.class, new Executable() {
+            @Override
+            public void execute() {
+                new PromiseNotifier<Void, Future<Void>>((Promise<Void>[]) null);
+            }
+        });
     }
 
     @SuppressWarnings("unchecked")
     @Test
     public void testNullPromiseInArray() {
-        expectedException.expect(IllegalArgumentException.class);
-        new PromiseNotifier<Void, Future<Void>>((Promise<Void>) null);
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                new PromiseNotifier<Void, Future<Void>>((Promise<Void>) null);
+            }
+        });
     }
 
     @Test

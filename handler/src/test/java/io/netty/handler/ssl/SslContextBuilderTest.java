@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -18,12 +18,22 @@ package io.netty.handler.ssl;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 import io.netty.util.CharsetUtil;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+import javax.net.ssl.KeyManager;
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLException;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509ExtendedKeyManager;
+import javax.net.ssl.X509ExtendedTrustManager;
 import java.io.ByteArrayInputStream;
+import java.net.Socket;
+import java.security.Principal;
+import java.security.PrivateKey;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.Collections;
 
 import static org.junit.Assert.*;
@@ -37,7 +47,7 @@ public class SslContextBuilderTest {
 
     @Test
     public void testClientContextFromFileOpenssl() throws Exception {
-        Assume.assumeTrue(OpenSsl.isAvailable());
+        OpenSsl.ensureAvailability();
         testClientContextFromFile(SslProvider.OPENSSL);
     }
 
@@ -48,7 +58,7 @@ public class SslContextBuilderTest {
 
     @Test
     public void testClientContextOpenssl() throws Exception {
-        Assume.assumeTrue(OpenSsl.isAvailable());
+        OpenSsl.ensureAvailability();
         testClientContext(SslProvider.OPENSSL);
     }
 
@@ -59,7 +69,7 @@ public class SslContextBuilderTest {
 
     @Test
     public void testKeyStoreTypeOpenssl() throws Exception {
-        Assume.assumeTrue(OpenSsl.isAvailable());
+        OpenSsl.ensureAvailability();
         testKeyStoreType(SslProvider.OPENSSL);
     }
 
@@ -70,7 +80,7 @@ public class SslContextBuilderTest {
 
     @Test
     public void testServerContextFromFileOpenssl() throws Exception {
-        Assume.assumeTrue(OpenSsl.isAvailable());
+        OpenSsl.ensureAvailability();
         testServerContextFromFile(SslProvider.OPENSSL);
     }
 
@@ -81,8 +91,20 @@ public class SslContextBuilderTest {
 
     @Test
     public void testServerContextOpenssl() throws Exception {
-        Assume.assumeTrue(OpenSsl.isAvailable());
+        OpenSsl.ensureAvailability();
         testServerContext(SslProvider.OPENSSL);
+    }
+
+    @Test
+    public void testContextFromManagersJdk() throws Exception {
+        testContextFromManagers(SslProvider.JDK);
+    }
+
+    @Test
+    public void testContextFromManagersOpenssl() throws Exception {
+        OpenSsl.ensureAvailability();
+        Assume.assumeTrue(OpenSsl.useKeyManagerFactory());
+        testContextFromManagers(SslProvider.OPENSSL);
     }
 
     @Test(expected = SSLException.class)
@@ -133,13 +155,13 @@ public class SslContextBuilderTest {
 
     @Test(expected = IllegalArgumentException.class)
     public void testInvalidCipherJdk() throws Exception {
-        Assume.assumeTrue(OpenSsl.isAvailable());
+        OpenSsl.ensureAvailability();
         testInvalidCipher(SslProvider.JDK);
     }
 
     @Test
     public void testInvalidCipherOpenSSL() throws Exception {
-        Assume.assumeTrue(OpenSsl.isAvailable());
+        OpenSsl.ensureAvailability();
         try {
             // This may fail or not depending on the OpenSSL version used
             // See https://github.com/openssl/openssl/issues/7196
@@ -232,5 +254,105 @@ public class SslContextBuilderTest {
         assertTrue(engine.getNeedClientAuth());
         engine.closeInbound();
         engine.closeOutbound();
+    }
+
+    private static void testContextFromManagers(SslProvider provider) throws Exception {
+        final SelfSignedCertificate cert = new SelfSignedCertificate();
+        KeyManager customKeyManager = new X509ExtendedKeyManager() {
+            @Override
+            public String[] getClientAliases(String s,
+                                             Principal[] principals) {
+                return new String[0];
+            }
+
+            @Override
+            public String chooseClientAlias(String[] strings,
+                                            Principal[] principals,
+                                            Socket socket) {
+                return "cert_sent_to_server";
+            }
+
+            @Override
+            public String[] getServerAliases(String s,
+                                             Principal[] principals) {
+                return new String[0];
+            }
+
+            @Override
+            public String chooseServerAlias(String s,
+                                            Principal[] principals,
+                                            Socket socket) {
+                return null;
+            }
+
+            @Override
+            public X509Certificate[] getCertificateChain(String s) {
+                X509Certificate[] certificates = new X509Certificate[1];
+                certificates[0] = cert.cert();
+                return new X509Certificate[0];
+            }
+
+            @Override
+            public PrivateKey getPrivateKey(String s) {
+                return cert.key();
+            }
+        };
+        TrustManager customTrustManager = new X509ExtendedTrustManager() {
+            @Override
+            public void checkClientTrusted(
+                    X509Certificate[] x509Certificates, String s,
+                    Socket socket) throws CertificateException { }
+
+            @Override
+            public void checkServerTrusted(
+                    X509Certificate[] x509Certificates, String s,
+                    Socket socket) throws CertificateException { }
+
+            @Override
+            public void checkClientTrusted(
+                    X509Certificate[] x509Certificates, String s,
+                    SSLEngine sslEngine) throws CertificateException { }
+
+            @Override
+            public void checkServerTrusted(
+                    X509Certificate[] x509Certificates, String s,
+                    SSLEngine sslEngine) throws CertificateException { }
+
+            @Override
+            public void checkClientTrusted(
+                    X509Certificate[] x509Certificates, String s)
+                    throws CertificateException { }
+
+            @Override
+            public void checkServerTrusted(
+                    X509Certificate[] x509Certificates, String s)
+                    throws CertificateException { }
+
+            @Override
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
+        SslContextBuilder client_builder = SslContextBuilder.forClient()
+                                                     .sslProvider(provider)
+                                                     .keyManager(customKeyManager)
+                                                     .trustManager(customTrustManager)
+                                                     .clientAuth(ClientAuth.OPTIONAL);
+        SslContext client_context = client_builder.build();
+        SSLEngine client_engine = client_context.newEngine(UnpooledByteBufAllocator.DEFAULT);
+        assertFalse(client_engine.getWantClientAuth());
+        assertFalse(client_engine.getNeedClientAuth());
+        client_engine.closeInbound();
+        client_engine.closeOutbound();
+        SslContextBuilder server_builder = SslContextBuilder.forServer(customKeyManager)
+                                                     .sslProvider(provider)
+                                                     .trustManager(customTrustManager)
+                                                     .clientAuth(ClientAuth.REQUIRE);
+        SslContext server_context = server_builder.build();
+        SSLEngine server_engine = server_context.newEngine(UnpooledByteBufAllocator.DEFAULT);
+        assertFalse(server_engine.getWantClientAuth());
+        assertTrue(server_engine.getNeedClientAuth());
+        server_engine.closeInbound();
+        server_engine.closeOutbound();
     }
 }

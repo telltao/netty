@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -16,13 +16,15 @@
 package io.netty.testsuite.util;
 
 import io.netty.util.CharsetUtil;
+import io.netty.util.internal.ObjectUtil;
+import io.netty.util.internal.SuppressJava6Requirement;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.rules.TestName;
 import org.tukaani.xz.LZMA2Options;
 import org.tukaani.xz.XZOutputStream;
 
-import javax.management.MBeanServer;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -38,6 +40,8 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import javax.management.MBeanServer;
 
 public final class TestUtils {
 
@@ -72,7 +76,7 @@ public final class TestUtils {
      *
      */
     public static boolean isSctpSupported() {
-        String os = System.getProperty("os.name").toLowerCase(Locale.UK);
+        String os = System.getProperty("os.name").toLowerCase(Locale.US);
         if ("unix".equals(os) || "linux".equals(os) || "sun".equals(os) || "solaris".equals(os)) {
             try {
                 // Try to open a SCTP Channel, by using reflection to make it compile also on
@@ -102,6 +106,23 @@ public final class TestUtils {
     /**
      * Returns the method name of the current test.
      */
+    @SuppressJava6Requirement(reason = "Test only")
+    public static String testMethodName(TestInfo testInfo) {
+        String testMethodName = testInfo.getTestMethod().map(new Function<Method, String>() {
+            @Override
+            public String apply(Method method) {
+                return method.getName();
+            }
+        }).orElse("[unknown method]");
+        if (testMethodName.contains("[")) {
+            testMethodName = testMethodName.substring(0, testMethodName.indexOf('['));
+        }
+        return testMethodName;
+    }
+
+    /**
+     * Returns the method name of the current test.
+     */
     public static String testMethodName(TestName testName) {
         String testMethodName = testName.getMethodName();
         if (testMethodName.contains("[")) {
@@ -112,9 +133,7 @@ public final class TestUtils {
 
     public static void dump(String filenamePrefix) throws IOException {
 
-        if (filenamePrefix == null) {
-            throw new NullPointerException("filenamePrefix");
-        }
+        ObjectUtil.checkNotNull(filenamePrefix, "filenamePrefix");
 
         final String timestamp = timestamp();
         final File heapDumpFile = new File(filenamePrefix + '.' + timestamp + ".hprof");
@@ -142,6 +161,10 @@ public final class TestUtils {
                 return name.endsWith(".hprof");
             }
         });
+        if (files == null) {
+            logger.warn("failed to find heap dump due to I/O error!");
+            return;
+        }
 
         final byte[] buf = new byte[65536];
         final LZMA2Options options = new LZMA2Options(LZMA2Options.PRESET_DEFAULT);

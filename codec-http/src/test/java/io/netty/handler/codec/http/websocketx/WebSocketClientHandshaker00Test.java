@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -39,12 +39,11 @@ public class WebSocketClientHandshaker00Test extends WebSocketClientHandshakerTe
     }
 
     @Override
-    protected CharSequence[] getHandshakeHeaderNames() {
+    protected CharSequence[] getHandshakeRequiredHeaderNames() {
         return new CharSequence[] {
                 HttpHeaderNames.CONNECTION,
                 HttpHeaderNames.UPGRADE,
                 HttpHeaderNames.HOST,
-                HttpHeaderNames.ORIGIN,
                 HttpHeaderNames.SEC_WEBSOCKET_KEY1,
                 HttpHeaderNames.SEC_WEBSOCKET_KEY2,
         };

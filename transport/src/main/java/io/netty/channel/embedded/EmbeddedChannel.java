@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -26,6 +26,7 @@ import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelId;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelMetadata;
@@ -873,8 +874,8 @@ public class EmbeddedChannel extends AbstractChannel {
         }
 
         @Override
-        protected void onUnhandledInboundMessage(Object msg) {
-          handleInboundMessage(msg);
+        protected void onUnhandledInboundMessage(ChannelHandlerContext ctx, Object msg) {
+            handleInboundMessage(msg);
         }
     }
 }

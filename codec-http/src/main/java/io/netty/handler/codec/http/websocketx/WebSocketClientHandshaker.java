@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -18,7 +18,9 @@ package io.netty.handler.codec.http.websocketx;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOutboundInvoker;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.SimpleChannelInboundHandler;
@@ -35,6 +37,7 @@ import io.netty.handler.codec.http.HttpResponseDecoder;
 import io.netty.handler.codec.http.HttpScheme;
 import io.netty.util.NetUtil;
 import io.netty.util.ReferenceCountUtil;
+import io.netty.util.internal.ObjectUtil;
 
 import java.net.URI;
 import java.nio.channels.ClosedChannelException;
@@ -233,9 +236,7 @@ public abstract class WebSocketClientHandshaker {
      *            Channel
      */
     public ChannelFuture handshake(Channel channel) {
-        if (channel == null) {
-            throw new NullPointerException("channel");
-        }
+        ObjectUtil.checkNotNull(channel, "channel");
         return handshake(channel, channel.newPromise());
     }
 
@@ -254,7 +255,7 @@ public abstract class WebSocketClientHandshaker {
             HttpClientCodec codec = pipeline.get(HttpClientCodec.class);
             if (codec == null) {
                promise.setFailure(new IllegalStateException("ChannelPipeline does not contain " +
-                       "a HttpResponseDecoder or HttpClientCodec"));
+                       "an HttpResponseDecoder or HttpClientCodec"));
                return promise;
             }
         }
@@ -272,7 +273,7 @@ public abstract class WebSocketClientHandshaker {
                     }
                     if (ctx == null) {
                         promise.setFailure(new IllegalStateException("ChannelPipeline does not contain " +
-                                "a HttpRequestEncoder or HttpClientCodec"));
+                                "an HttpRequestEncoder or HttpClientCodec"));
                         return;
                     }
                     p.addAfter(ctx.name(), "ws-encoder", newWebSocketEncoder());
@@ -325,9 +326,9 @@ public abstract class WebSocketClientHandshaker {
         } // else mixed cases - which are all errors
 
         if (!protocolValid) {
-            throw new WebSocketHandshakeException(String.format(
+            throw new WebSocketClientHandshakeException(String.format(
                     "Invalid subprotocol. Actual: %s. Expected one of: %s",
-                    receivedProtocol, expectedSubprotocol));
+                    receivedProtocol, expectedSubprotocol), response);
         }
 
         setHandshakeComplete();
@@ -350,7 +351,7 @@ public abstract class WebSocketClientHandshaker {
             ctx = p.context(HttpClientCodec.class);
             if (ctx == null) {
                 throw new IllegalStateException("ChannelPipeline does not contain " +
-                        "a HttpRequestEncoder or HttpClientCodec");
+                        "an HttpRequestEncoder or HttpClientCodec");
             }
             final HttpClientCodec codec =  (HttpClientCodec) ctx.handler();
             // Remove the encoder part of the codec as the user may start writing frames after this method returns.
@@ -429,7 +430,7 @@ public abstract class WebSocketClientHandshaker {
                 ctx = p.context(HttpClientCodec.class);
                 if (ctx == null) {
                     return promise.setFailure(new IllegalStateException("ChannelPipeline does not contain " +
-                            "a HttpResponseDecoder or HttpClientCodec"));
+                            "an HttpResponseDecoder or HttpClientCodec"));
                 }
             }
             // Add aggregator and ensure we feed the HttpResponse so it is aggregated. A limit of 8192 should be more
@@ -492,7 +493,10 @@ public abstract class WebSocketClientHandshaker {
     protected abstract WebSocketFrameEncoder newWebSocketEncoder();
 
     /**
-     * Performs the closing handshake
+     * Performs the closing handshake.
+     *
+     * When called from within a {@link ChannelHandler} you most likely want to use
+     * {@link #close(ChannelHandlerContext, CloseWebSocketFrame)}.
      *
      * @param channel
      *            Channel
@@ -500,14 +504,15 @@ public abstract class WebSocketClientHandshaker {
      *            Closing Frame that was received
      */
     public ChannelFuture close(Channel channel, CloseWebSocketFrame frame) {
-        if (channel == null) {
-            throw new NullPointerException("channel");
-        }
+        ObjectUtil.checkNotNull(channel, "channel");
         return close(channel, frame, channel.newPromise());
     }
 
     /**
      * Performs the closing handshake
+     *
+     * When called from within a {@link ChannelHandler} you most likely want to use
+     * {@link #close(ChannelHandlerContext, CloseWebSocketFrame, ChannelPromise)}.
      *
      * @param channel
      *            Channel
@@ -517,24 +522,50 @@ public abstract class WebSocketClientHandshaker {
      *            the {@link ChannelPromise} to be notified when the closing handshake is done
      */
     public ChannelFuture close(Channel channel, CloseWebSocketFrame frame, ChannelPromise promise) {
-        if (channel == null) {
-            throw new NullPointerException("channel");
-        }
-        channel.writeAndFlush(frame, promise);
-        applyForceCloseTimeout(channel, promise);
-        return promise;
+        ObjectUtil.checkNotNull(channel, "channel");
+        return close0(channel, channel, frame, promise);
     }
 
-    private void applyForceCloseTimeout(final Channel channel, ChannelFuture flushFuture) {
+    /**
+     * Performs the closing handshake
+     *
+     * @param ctx
+     *            the {@link ChannelHandlerContext} to use.
+     * @param frame
+     *            Closing Frame that was received
+     */
+    public ChannelFuture close(ChannelHandlerContext ctx, CloseWebSocketFrame frame) {
+        ObjectUtil.checkNotNull(ctx, "ctx");
+        return close(ctx, frame, ctx.newPromise());
+    }
+
+    /**
+     * Performs the closing handshake
+     *
+     * @param ctx
+     *            the {@link ChannelHandlerContext} to use.
+     * @param frame
+     *            Closing Frame that was received
+     * @param promise
+     *            the {@link ChannelPromise} to be notified when the closing handshake is done
+     */
+    public ChannelFuture close(ChannelHandlerContext ctx, CloseWebSocketFrame frame, ChannelPromise promise) {
+        ObjectUtil.checkNotNull(ctx, "ctx");
+        return close0(ctx, ctx.channel(), frame, promise);
+    }
+
+    private ChannelFuture close0(final ChannelOutboundInvoker invoker, final Channel channel,
+                                 CloseWebSocketFrame frame, ChannelPromise promise) {
+        invoker.writeAndFlush(frame, promise);
         final long forceCloseTimeoutMillis = this.forceCloseTimeoutMillis;
         final WebSocketClientHandshaker handshaker = this;
         if (forceCloseTimeoutMillis <= 0 || !channel.isActive() || forceCloseInit != 0) {
-            return;
+            return promise;
         }
 
-        flushFuture.addListener(new ChannelFutureListener() {
+        promise.addListener(new ChannelFutureListener() {
             @Override
-            public void operationComplete(ChannelFuture future) throws Exception {
+            public void operationComplete(ChannelFuture future) {
                 // If flush operation failed, there is no reason to expect
                 // a server to receive CloseFrame. Thus this should be handled
                 // by the application separately.
@@ -545,7 +576,7 @@ public abstract class WebSocketClientHandshaker {
                         @Override
                         public void run() {
                             if (channel.isActive()) {
-                                channel.close();
+                                invoker.close();
                                 forceCloseComplete = true;
                             }
                         }
@@ -560,6 +591,7 @@ public abstract class WebSocketClientHandshaker {
                 }
             }
         });
+        return promise;
     }
 
     /**
@@ -571,12 +603,9 @@ public abstract class WebSocketClientHandshaker {
         }
 
         String path = wsURL.getRawPath();
+        path = path == null || path.isEmpty() ? "/" : path;
         String query = wsURL.getRawQuery();
-        if (query != null && !query.isEmpty()) {
-            path = path + '?' + query;
-        }
-
-        return path == null || path.isEmpty() ? "/" : path;
+        return query != null && !query.isEmpty() ? path + '?' + query : path;
     }
 
     static CharSequence websocketHostValue(URI wsURL) {
@@ -598,7 +627,7 @@ public abstract class WebSocketClientHandshaker {
         }
 
         // if the port is not standard (80/443) its needed to add the port to the header.
-        // See http://tools.ietf.org/html/rfc6454#section-6.2
+        // See https://tools.ietf.org/html/rfc6454#section-6.2
         return NetUtil.toSocketAddressString(host, port);
     }
 
@@ -623,7 +652,7 @@ public abstract class WebSocketClientHandshaker {
 
         if (port != defaultPort && port != -1) {
             // if the port is not standard (80/443) its needed to add the port to the header.
-            // See http://tools.ietf.org/html/rfc6454#section-6.2
+            // See https://tools.ietf.org/html/rfc6454#section-6.2
             return schemePrefix + NetUtil.toSocketAddressString(host, port);
         }
         return schemePrefix + host;

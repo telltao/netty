@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -15,6 +15,7 @@
  */
 package io.netty.util.internal;
 
+import io.netty.util.CharsetUtil;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import org.jctools.queues.MpscArrayQueue;
@@ -22,25 +23,35 @@ import org.jctools.queues.MpscChunkedArrayQueue;
 import org.jctools.queues.MpscUnboundedArrayQueue;
 import org.jctools.queues.SpscLinkedQueue;
 import org.jctools.queues.atomic.MpscAtomicArrayQueue;
-import org.jctools.queues.atomic.MpscGrowableAtomicArrayQueue;
+import org.jctools.queues.atomic.MpscChunkedAtomicArrayQueue;
 import org.jctools.queues.atomic.MpscUnboundedAtomicArrayQueue;
 import org.jctools.queues.atomic.SpscLinkedAtomicQueue;
 import org.jctools.util.Pow2;
 import org.jctools.util.UnsafeAccess;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.file.Files;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Deque;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentMap;
@@ -72,11 +83,6 @@ public final class PlatformDependent {
     private static final Pattern MAX_DIRECT_MEMORY_SIZE_ARG_PATTERN = Pattern.compile(
             "\\s*-XX:MaxDirectMemorySize\\s*=\\s*([0-9]+)\\s*([kKmMgG]?)\\s*$");
 
-    private static final boolean IS_WINDOWS = isWindows0();
-    private static final boolean IS_OSX = isOsx0();
-    private static final boolean IS_J9_JVM = isJ9Jvm0();
-    private static final boolean IS_IVKVM_DOT_NET = isIkvmDotNet0();
-
     private static final boolean MAYBE_SUPER_USER;
 
     private static final boolean CAN_ENABLE_TCP_NODELAY_BY_DEFAULT = !isAndroid();
@@ -97,6 +103,15 @@ public final class PlatformDependent {
     private static final String NORMALIZED_ARCH = normalizeArch(SystemPropertyUtil.get("os.arch", ""));
     private static final String NORMALIZED_OS = normalizeOs(SystemPropertyUtil.get("os.name", ""));
 
+    // keep in sync with maven's pom.xml via os.detection.classifierWithLikes!
+    private static final String[] ALLOWED_LINUX_OS_CLASSIFIERS = {"fedora", "suse", "arch"};
+    private static final Set<String> LINUX_OS_CLASSIFIERS;
+
+    private static final boolean IS_WINDOWS = isWindows0();
+    private static final boolean IS_OSX = isOsx0();
+    private static final boolean IS_J9_JVM = isJ9Jvm0();
+    private static final boolean IS_IVKVM_DOT_NET = isIkvmDotNet0();
+
     private static final int ADDRESS_SIZE = addressSize0();
     private static final boolean USE_DIRECT_BUFFER_NO_CLEANER;
     private static final AtomicLong DIRECT_MEMORY_COUNTER;
@@ -104,7 +119,10 @@ public final class PlatformDependent {
     private static final ThreadLocalRandomProvider RANDOM_PROVIDER;
     private static final Cleaner CLEANER;
     private static final int UNINITIALIZED_ARRAY_ALLOCATION_THRESHOLD;
-
+    // For specifications, see https://www.freedesktop.org/software/systemd/man/os-release.html
+    private static final String[] OS_RELEASE_FILES = {"/etc/os-release", "/usr/lib/os-release"};
+    private static final String LINUX_ID_PREFIX = "ID=";
+    private static final String LINUX_ID_LIKE_PREFIX = "ID_LIKE=";
     public static final boolean BIG_ENDIAN_NATIVE_ORDER = ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN;
 
     private static final Cleaner NOOP = new Cleaner() {
@@ -118,6 +136,7 @@ public final class PlatformDependent {
         if (javaVersion() >= 7) {
             RANDOM_PROVIDER = new ThreadLocalRandomProvider() {
                 @Override
+                @SuppressJava6Requirement(reason = "Usage guarded by java version check")
                 public Random current() {
                     return java.util.concurrent.ThreadLocalRandom.current();
                 }
@@ -196,6 +215,67 @@ public final class PlatformDependent {
                     "Unless explicitly requested, heap buffer will always be preferred to avoid potential system " +
                     "instability.");
         }
+
+        final Set<String> allowedClassifiers = Collections.unmodifiableSet(
+                new HashSet<String>(Arrays.asList(ALLOWED_LINUX_OS_CLASSIFIERS)));
+        final Set<String> availableClassifiers = new LinkedHashSet<String>();
+        for (final String osReleaseFileName : OS_RELEASE_FILES) {
+            final File file = new File(osReleaseFileName);
+            boolean found = AccessController.doPrivileged(new PrivilegedAction<Boolean>() {
+                @Override
+                public Boolean run() {
+                    try {
+                        if (file.exists()) {
+                            BufferedReader reader = null;
+                            try {
+                                reader = new BufferedReader(
+                                        new InputStreamReader(
+                                                new FileInputStream(file), CharsetUtil.UTF_8));
+
+                                String line;
+                                while ((line = reader.readLine()) != null) {
+                                    if (line.startsWith(LINUX_ID_PREFIX)) {
+                                        String id = normalizeOsReleaseVariableValue(
+                                                line.substring(LINUX_ID_PREFIX.length()));
+                                        addClassifier(allowedClassifiers, availableClassifiers, id);
+                                    } else if (line.startsWith(LINUX_ID_LIKE_PREFIX)) {
+                                        line = normalizeOsReleaseVariableValue(
+                                                line.substring(LINUX_ID_LIKE_PREFIX.length()));
+                                        addClassifier(allowedClassifiers, availableClassifiers, line.split("[ ]+"));
+                                    }
+                                }
+                            } catch (SecurityException e) {
+                                logger.debug("Unable to read {}", osReleaseFileName, e);
+                            } catch (IOException e) {
+                                logger.debug("Error while reading content of {}", osReleaseFileName, e);
+                            } finally {
+                                if (reader != null) {
+                                    try {
+                                        reader.close();
+                                    } catch (IOException ignored) {
+                                        // Ignore
+                                    }
+                                }
+                            }
+                            // specification states we should only fall back if /etc/os-release does not exist
+                            return true;
+                        }
+                    } catch (SecurityException e) {
+                        logger.debug("Unable to check if {} exists", osReleaseFileName, e);
+                    }
+                    return false;
+                }
+            });
+
+            if (found) {
+                break;
+            }
+        }
+        LINUX_OS_CLASSIFIERS = Collections.unmodifiableSet(availableClassifiers);
+    }
+
+    public static long byteArrayBaseOffset() {
+        return BYTE_ARRAY_BASE_OFFSET;
     }
 
     public static boolean hasDirectBufferNoCleanerConstructor() {
@@ -268,7 +348,7 @@ public final class PlatformDependent {
     /**
      * {@code true} if and only if the platform supports unaligned access.
      *
-     * @see <a href="http://en.wikipedia.org/wiki/Segmentation_fault#Bus_error">Wikipedia on segfault</a>
+     * @see <a href="https://en.wikipedia.org/wiki/Segmentation_fault#Bus_error">Wikipedia on segfault</a>
      */
     public static boolean isUnaligned() {
         return PlatformDependent0.isUnaligned();
@@ -424,6 +504,14 @@ public final class PlatformDependent {
         return PlatformDependent0.getInt(object, fieldOffset);
     }
 
+    public static int getIntVolatile(long address) {
+        return PlatformDependent0.getIntVolatile(address);
+    }
+
+    public static void putIntOrdered(long adddress, int newValue) {
+        PlatformDependent0.putIntOrdered(adddress, newValue);
+    }
+
     public static byte getByte(long address) {
         return PlatformDependent0.getByte(address);
     }
@@ -444,6 +532,10 @@ public final class PlatformDependent {
         return PlatformDependent0.getByte(data, index);
     }
 
+    public static byte getByte(byte[] data, long index) {
+        return PlatformDependent0.getByte(data, index);
+    }
+
     public static short getShort(byte[] data, int index) {
         return PlatformDependent0.getShort(data, index);
     }
@@ -452,7 +544,15 @@ public final class PlatformDependent {
         return PlatformDependent0.getInt(data, index);
     }
 
+    public static int getInt(int[] data, long index) {
+        return PlatformDependent0.getInt(data, index);
+    }
+
     public static long getLong(byte[] data, int index) {
+        return PlatformDependent0.getLong(data, index);
+    }
+
+    public static long getLong(long[] data, long index) {
         return PlatformDependent0.getLong(data, index);
     }
 
@@ -572,6 +672,10 @@ public final class PlatformDependent {
         PlatformDependent0.putByte(data, index, value);
     }
 
+    public static void putByte(Object data, long offset, byte value) {
+        PlatformDependent0.putByte(data, offset, value);
+    }
+
     public static void putShort(byte[] data, int index, short value) {
         PlatformDependent0.putShort(data, index, value);
     }
@@ -598,6 +702,11 @@ public final class PlatformDependent {
 
     public static void copyMemory(byte[] src, int srcIndex, long dstAddr, long length) {
         PlatformDependent0.copyMemory(src, BYTE_ARRAY_BASE_OFFSET + srcIndex, null, dstAddr, length);
+    }
+
+    public static void copyMemory(byte[] src, int srcIndex, byte[] dst, int dstIndex, long length) {
+        PlatformDependent0.copyMemory(src, BYTE_ARRAY_BASE_OFFSET + srcIndex,
+                                      dst, BYTE_ARRAY_BASE_OFFSET + dstIndex, length);
     }
 
     public static void copyMemory(long srcAddr, byte[] dst, int dstIndex, long length) {
@@ -657,6 +766,32 @@ public final class PlatformDependent {
         int capacity = buffer.capacity();
         PlatformDependent0.freeMemory(PlatformDependent0.directBufferAddress(buffer));
         decrementMemoryCounter(capacity);
+    }
+
+    public static boolean hasAlignDirectByteBuffer() {
+        return hasUnsafe() || PlatformDependent0.hasAlignSliceMethod();
+    }
+
+    public static ByteBuffer alignDirectBuffer(ByteBuffer buffer, int alignment) {
+        if (!buffer.isDirect()) {
+            throw new IllegalArgumentException("Cannot get aligned slice of non-direct byte buffer.");
+        }
+        if (PlatformDependent0.hasAlignSliceMethod()) {
+            return PlatformDependent0.alignSlice(buffer, alignment);
+        }
+        if (hasUnsafe()) {
+            long address = directBufferAddress(buffer);
+            long aligned = align(address, alignment);
+            buffer.position((int) (aligned - address));
+            return buffer.slice();
+        }
+        // We don't have enough information to be able to align any buffers.
+        throw new UnsupportedOperationException("Cannot align direct buffer. " +
+                "Needs either Unsafe or ByteBuffer.alignSlice method available.");
+    }
+
+    public static long align(long value, int alignment) {
+        return Pow2.align(value, alignment);
     }
 
     private static void incrementMemoryCounter(int capacity) {
@@ -835,12 +970,12 @@ public final class PlatformDependent {
         }
 
         static <T> Queue<T> newMpscQueue(final int maxCapacity) {
-            // Calculate the max capacity which can not be bigger then MAX_ALLOWED_MPSC_CAPACITY.
+            // Calculate the max capacity which can not be bigger than MAX_ALLOWED_MPSC_CAPACITY.
             // This is forced by the MpscChunkedArrayQueue implementation as will try to round it
             // up to the next power of two and so will overflow otherwise.
             final int capacity = max(min(maxCapacity, MAX_ALLOWED_MPSC_CAPACITY), MIN_MAX_MPSC_CAPACITY);
             return USE_MPSC_CHUNKED_ARRAY_QUEUE ? new MpscChunkedArrayQueue<T>(MPSC_CHUNK_SIZE, capacity)
-                                                : new MpscGrowableAtomicArrayQueue<T>(MPSC_CHUNK_SIZE, capacity);
+                                                : new MpscChunkedAtomicArrayQueue<T>(MPSC_CHUNK_SIZE, capacity);
         }
 
         static <T> Queue<T> newMpscQueue() {
@@ -906,6 +1041,7 @@ public final class PlatformDependent {
     /**
      * Returns a new concurrent {@link Deque}.
      */
+    @SuppressJava6Requirement(reason = "Usage guarded by java version check")
     public static <C> Deque<C> newConcurrentDeque() {
         if (javaVersion() < 7) {
             return new LinkedBlockingDeque<C>();
@@ -922,7 +1058,7 @@ public final class PlatformDependent {
     }
 
     private static boolean isWindows0() {
-        boolean windows = SystemPropertyUtil.get("os.name", "").toLowerCase(Locale.US).contains("win");
+        boolean windows = "windows".equals(NORMALIZED_OS);
         if (windows) {
             logger.debug("Platform: Windows");
         }
@@ -930,10 +1066,7 @@ public final class PlatformDependent {
     }
 
     private static boolean isOsx0() {
-        String osname = SystemPropertyUtil.get("os.name", "").toLowerCase(Locale.US)
-                .replaceAll("[^a-z0-9]+", "");
-        boolean osx = osname.startsWith("macosx") || osname.startsWith("osx");
-
+        boolean osx = "osx".equals(NORMALIZED_OS);
         if (osx) {
             logger.debug("Platform: MacOS");
         }
@@ -1057,6 +1190,8 @@ public final class PlatformDependent {
                         break;
                     case 'g': case 'G':
                         maxDirectMemory *= 1024 * 1024 * 1024;
+                        break;
+                    default:
                         break;
                 }
                 break;
@@ -1274,6 +1409,48 @@ public final class PlatformDependent {
         return NORMALIZED_OS;
     }
 
+    public static Set<String> normalizedLinuxClassifiers() {
+        return LINUX_OS_CLASSIFIERS;
+    }
+
+    @SuppressJava6Requirement(reason = "Guarded by version check")
+    public static File createTempFile(String prefix, String suffix, File directory) throws IOException {
+        if (javaVersion() >= 7) {
+            if (directory == null) {
+                return Files.createTempFile(prefix, suffix).toFile();
+            }
+            return Files.createTempFile(directory.toPath(), prefix, suffix).toFile();
+        }
+        if (directory == null) {
+            return File.createTempFile(prefix, suffix);
+        }
+        File file = File.createTempFile(prefix, suffix, directory);
+        // Try to adjust the perms, if this fails there is not much else we can do...
+        file.setReadable(false, false);
+        file.setReadable(true, true);
+        return file;
+    }
+
+    /**
+     * Adds only those classifier strings to <tt>dest</tt> which are present in <tt>allowed</tt>.
+     *
+     * @param allowed          allowed classifiers
+     * @param dest             destination set
+     * @param maybeClassifiers potential classifiers to add
+     */
+    private static void addClassifier(Set<String> allowed, Set<String> dest, String... maybeClassifiers) {
+        for (String id : maybeClassifiers) {
+            if (allowed.contains(id)) {
+                dest.add(id);
+            }
+        }
+    }
+
+    private static String normalizeOsReleaseVariableValue(String value) {
+        // Variable assignment values may be enclosed in double or single quotes.
+        return value.trim().replaceAll("[\"']", "");
+    }
+
     private static String normalize(String value) {
         return value.toLowerCase(Locale.US).replaceAll("[^a-z0-9]+", "");
     }
@@ -1337,7 +1514,7 @@ public final class PlatformDependent {
         if (value.startsWith("linux")) {
             return "linux";
         }
-        if (value.startsWith("macosx") || value.startsWith("osx")) {
+        if (value.startsWith("macosx") || value.startsWith("osx") || value.startsWith("darwin")) {
             return "osx";
         }
         if (value.startsWith("freebsd")) {

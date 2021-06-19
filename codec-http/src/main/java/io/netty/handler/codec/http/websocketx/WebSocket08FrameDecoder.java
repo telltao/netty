@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -13,7 +13,7 @@
  * License for the specific language governing permissions and limitations
  * under the License.
  */
-// (BSD License: http://www.opensource.org/licenses/bsd-license)
+// (BSD License: https://www.opensource.org/licenses/bsd-license)
 //
 // Copyright (c) 2011, Joe Walnes and contributors
 // All rights reserved.
@@ -179,8 +179,8 @@ public class WebSocket08FrameDecoder extends ByteToMessageDecoder
             frameRsv = (b & 0x70) >> 4;
             frameOpcode = b & 0x0F;
 
-            if (logger.isDebugEnabled()) {
-                logger.debug("Decoding WebSocket Frame opCode={}", frameOpcode);
+            if (logger.isTraceEnabled()) {
+                logger.trace("Decoding WebSocket Frame opCode={}", frameOpcode);
             }
 
             state = State.READING_SECOND;
@@ -246,7 +246,7 @@ public class WebSocket08FrameDecoder extends ByteToMessageDecoder
                 }
 
                 // check opcode vs message fragmentation state 2/2
-                if (fragmentedFramesCount != 0 && frameOpcode != OPCODE_CONT && frameOpcode != OPCODE_PING) {
+                if (fragmentedFramesCount != 0 && frameOpcode != OPCODE_CONT) {
                     protocolViolation(ctx, in,
                                       "received non-continuation data frame while inside fragmented message");
                     return;
@@ -288,8 +288,8 @@ public class WebSocket08FrameDecoder extends ByteToMessageDecoder
                 return;
             }
 
-            if (logger.isDebugEnabled()) {
-                logger.debug("Decoding WebSocket Frame length={}", framePayloadLength);
+            if (logger.isTraceEnabled()) {
+                logger.trace("Decoding WebSocket Frame length={}", framePayloadLength);
             }
 
             state = State.MASKING_KEY;
@@ -347,9 +347,7 @@ public class WebSocket08FrameDecoder extends ByteToMessageDecoder
                 if (frameFinalFlag) {
                     // Final frame of the sequence. Apparently ping frames are
                     // allowed in the middle of a fragmented message
-                    if (frameOpcode != OPCODE_PING) {
-                        fragmentedFramesCount = 0;
-                    }
+                    fragmentedFramesCount = 0;
                 } else {
                     // Increment counter
                     fragmentedFramesCount++;

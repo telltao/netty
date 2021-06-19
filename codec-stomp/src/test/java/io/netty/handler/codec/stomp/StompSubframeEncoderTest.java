@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -18,23 +18,29 @@ package io.netty.handler.codec.stomp;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.*;
+import static io.netty.handler.codec.stomp.StompTestConstants.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class StompSubframeEncoderTest {
 
     private EmbeddedChannel channel;
 
-    @Before
+    @BeforeEach
     public void setup() throws Exception {
         channel = new EmbeddedChannel(new StompSubframeEncoder());
     }
 
-    @After
+    @AfterEach
     public void teardown() throws Exception {
         assertFalse(channel.finish());
     }
@@ -62,5 +68,35 @@ public class StompSubframeEncoderTest {
         String content = aggregatedBuffer.toString(CharsetUtil.UTF_8);
         assertEquals(StompTestConstants.CONNECT_FRAME, content);
         aggregatedBuffer.release();
+    }
+
+    @Test
+    public void testUtf8FrameEncoding() {
+        StompFrame frame = new DefaultStompFrame(StompCommand.SEND,
+                                                 Unpooled.wrappedBuffer("body".getBytes(CharsetUtil.UTF_8)));
+        StompHeaders incoming = frame.headers();
+        incoming.set(StompHeaders.DESTINATION, "/queue/№11±♛нетти♕");
+        incoming.set(StompHeaders.CONTENT_TYPE, AsciiString.of("text/plain"));
+
+        channel.writeOutbound(frame);
+
+        ByteBuf fullFrame = channel.readOutbound();
+        assertEquals(SEND_FRAME_UTF8, fullFrame.toString(CharsetUtil.UTF_8));
+        assertTrue(fullFrame.release());
+    }
+
+    @Test
+    public void testOneBufferForStompFrameWithEmptyContent() {
+        StompFrame connectedFrame = new DefaultStompFrame(StompCommand.CONNECTED);
+        connectedFrame.headers().set(StompHeaders.VERSION, "1.2");
+
+        assertTrue(channel.writeOutbound(connectedFrame));
+
+        ByteBuf stompBuffer = channel.readOutbound();
+
+        assertNotNull(stompBuffer);
+        assertNull(channel.readOutbound());
+        assertEquals("CONNECTED\nversion:1.2\n\n\0", stompBuffer.toString(CharsetUtil.UTF_8));
+        assertTrue(stompBuffer.release());
     }
 }
